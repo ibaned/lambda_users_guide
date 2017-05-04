@@ -309,7 +309,12 @@ over a functor in terms of lines of code.
 Now we can present the set of `LAMBDA` macros offered by Kokkos.
 Kokkos still considers CUDA lambdas
 a somewhat experimental feature, so they are disabled by default.
-(TODO: document how to enable them).
+If building Kokkos as part of Trilinos, CUDA lambdas can be
+enabled with this CMake configuration flag:
+
+```
+-DKokkos_ENABLE_Cuda_Lambda:BOOL=ON
+```
 
 `KOKKOS_LAMBDA` will be defined to `[=] __device__` or `[=] __host__ __device__`,
 depending on your CUDA version.
