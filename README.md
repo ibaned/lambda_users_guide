@@ -146,7 +146,7 @@ struct LotsToDo {
 
 struct Lambda {
   int local_x;
-  Lambda(LotsToDo* given_local_x) { local_x = given_local_x; }
+  Lambda(int given_local_x) { local_x = given_local_x; }
   bool operator()(int const& y) { return y == local_x; }
 };
 
