@@ -344,7 +344,7 @@ If we use `[=] __device__` as our lambda, like so:
 class Fancy {
  public:
   void set_values() {
-    Kokkos::parallel_for(array_size, [=] __device__ (int i) {
+    Kokkos::parallel_for(array_size, KOKKOS_LAMBDA (int i) {
       array(i) = factor * i;
     });
   }
@@ -383,13 +383,13 @@ because `Lambda::this` is a pointer to an object in CPU memory
 The GPU will attempt to access `this->array` and `this->factor`,
 which is an illegal memory access from the GPU to CPU memory.
 
-Now see how using the class-capturing lambda can help:
+Now see how using `KOKKOS_CLASS_LAMBDA` can help:
 
 ```cpp
 class Fancy {
  public:
   void set_values() {
-    Kokkos::parallel_for(array_size, [=,*this] __device__ (int i) {
+    Kokkos::parallel_for(array_size, KOKKOS_CLASS_LAMBDA (int i) {
       array(i) = factor * i;
     });
   }
@@ -399,6 +399,8 @@ class Fancy {
   double factor;
 }
 ```
+
+Is transformed into this:
 
 ```cpp
 struct Fancy {
@@ -419,3 +421,16 @@ void Fancy::set_values(Fancy* this) {
   Kokkos::parallel_for(this->array_size, Lambda(*this));
 }
 ```
+
+As long as each member variable of the `Fancy` class
+are okay to copy by value onto the GPU, this will work properly.
+Simple types `int` and `double` are always okay,
+and `Kokkos::View` is specially designed to be okay.
+However, there would be an issue if class `Fancy`
+also had a member which was of type `std::vector<int>`,
+for example, because this type has constructors and
+a destructor which cannot be called from the GPU.
+
+Another known limitation is that a CUDA lambda may
+not be used inside a class member function that is
+private or protected (TODO: give an explanation of this).
