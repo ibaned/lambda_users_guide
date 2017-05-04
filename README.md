@@ -48,6 +48,71 @@ the function.
 Finally, note that the result type of this lambda was automatically determined based
 on the `return` statement inside of it.
 
+### Lambdas inside classes
+
+As it will be relevant to the discussion of lambdas in Kokkos, it is important
+to discuss lambda capture behavior as it applies to member variables of a class.
+Consider this code:
+
+```cpp
+class LotsToDo {
+ public:
+  size_t which_is_it() {
+    auto it = std::find_if(v.begin(), v.end(), [=] (int const& y) { return y == x; });
+    return it - v.begin();
+  }
+ private:
+  std::vector<int> v;
+  int x;
+};
+```
+
+The key aspect we'll focus on is the fact that the variable `x` is a member of
+class `LotsToDo`, which will make its capture rather non-intuitive.
+
+Conceptually, C++ compilers replace every use of a class's member variable
+`x` with `this->x` at some point during compilation.
+Compilers also conceptually add an implicit `this` argument to each member
+function.
+The key thing to note is that (conceptually) these transformations happen *before*
+the considerations associated with variable capture in a lambda.
+This means the intermediate conceptual state looks like:
+
+```cpp
+struct LotsToDo {
+  std::vector<int> v;
+  int x;
+};
+
+size_t LotsToDo::which_is_it(LotsToDo* this) {
+  auto it = std::find_if(this->v.begin(), this->v.end(), [=] (int const& y) { return y == this->x; });
+  return it - this->v.begin();
+}
+```
+
+Now the situation looks quite different to the compiler.
+`x` is no longer a variable in the `which_is_it` function, rather it is accessed
+indirectly via `this`.
+So the compiler decides to capture the `this` pointer, meaning the intermediate
+conceptual state after lambdas are converter to functors looks like this:
+
+```cpp
+struct LotsToDo {
+  std::vector<int> v;
+  int x;
+};
+
+size_t LotsToDo::which_is_it(LotsToDo* this) {
+  struct Lambda {
+    LotsToDo* this;
+    Lambda(LotsToDo* given_this) { this = given_this; }
+    bool operator()(int const& y) { return y == this->x; }
+  };
+  auto it = std::find_if(this->v.begin(), this->v.end(), Lambda(this));
+  return it - this->v.begin();
+}
+```
+
 ## Lambdas in Kokkos
 
 Like `std::find_if`, `Kokkos::parallel_for` accepts user-defined functors to essentially
@@ -78,6 +143,7 @@ that is compiled by NVCC:
 __host__ __device__ double funny_multiply(double a, double b) {
   return a * b - 1e-6;
 }
+```
 
 Kokkos provides convenience macros which expand to these attributes when using CUDA and
 expand to nothing otherwise:
@@ -111,5 +177,3 @@ which are referred to as "host-device lambdas".
 
 Note the trade-off with CUDA 7.5: one can use lambdas, but they will only be executable
 on the GPU, so one cannot compile a single "kernel" which can execute on both the CPU and GPU.
-
-### Lambdas inside classes
