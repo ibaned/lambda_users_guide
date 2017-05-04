@@ -94,7 +94,7 @@ Now the situation looks quite different to the compiler.
 `x` is no longer a variable in the `which_is_it` function, rather it is accessed
 indirectly via `this`.
 So the compiler decides to capture the `this` pointer, meaning the intermediate
-conceptual state after lambdas are converter to functors looks like this:
+conceptual state after lambdas are converter to functors looks somewhat like this:
 
 ```cpp
 struct LotsToDo {
@@ -102,16 +102,101 @@ struct LotsToDo {
   int x;
 };
 
+struct Lambda {
+  LotsToDo* this;
+  Lambda(LotsToDo* given_this) { this = given_this; }
+  bool operator()(int const& y) { return y == this->x; }
+};
+
 size_t LotsToDo::which_is_it(LotsToDo* this) {
-  struct Lambda {
-    LotsToDo* this;
-    Lambda(LotsToDo* given_this) { this = given_this; }
-    bool operator()(int const& y) { return y == this->x; }
-  };
   auto it = std::find_if(this->v.begin(), this->v.end(), Lambda(this));
   return it - this->v.begin();
 }
 ```
+
+Under normal circumstances, this actually works fine despite the fact
+that it works rather differently than developers initially expect.
+We'll see later that it causes problems with Kokkos + CUDA.
+
+Note that if we wanted things to work more intuitively, one way to do that
+would be to create a local variable copy of the member variable:
+
+```cpp
+class LotsToDo {
+ public:
+  size_t which_is_it() {
+    int local_x = this->x;
+    auto it = std::find_if(v.begin(), v.end(), [=] (int const& y) { return y == local_x; });
+    return it - v.begin();
+  }
+ private:
+  std::vector<int> v;
+  int x;
+};
+```
+
+`local_x` will not undergo any transformations of indirection, so it will
+be captured as expected:
+
+```cpp
+struct LotsToDo {
+  std::vector<int> v;
+  int x;
+};
+
+struct Lambda {
+  int local_x;
+  Lambda(LotsToDo* given_local_x) { local_x = given_local_x; }
+  bool operator()(int const& y) { return y == local_x; }
+};
+
+size_t LotsToDo::which_is_it(LotsToDo* this) {
+  int local_x = this->x;
+  auto it = std::find_if(this->v.begin(), this->v.end(), Lambda(this));
+  return it - this->v.begin();
+}
+```
+
+In addition, the C++17 standard includes a special capture list for lambdas (`[=,*this]`) which
+will force the lambda to capture the object instead of the pointer, so if we use that
+in our example:
+
+```cpp
+class LotsToDo {
+ public:
+  size_t which_is_it() {
+    auto it = std::find_if(v.begin(), v.end(), [=,*this] (int const& y) { return y == x; });
+    return it - v.begin();
+  }
+ private:
+  std::vector<int> v;
+  int x;
+};
+```
+
+The conceptual generated code is:
+
+```cpp
+struct LotsToDo {
+  std::vector<int> v;
+  int x;
+};
+
+struct Lambda {
+  LotsToDo star_this;
+  Lambda(LotsToDo const& given_star_this) { star_this = given_star_this; }
+  bool operator()(int const& y) { return y == star_this.x; }
+};
+
+size_t LotsToDo::which_is_it(LotsToDo* this) {
+  auto it = std::find_if(this->v.begin(), this->v.end(), Lambda(*this));
+  return it - this->v.begin();
+}
+```
+
+Note that this is making a deep copy of a `std::vector<int>`, so when using this
+feature one should review the contents of the class being captured to avoid
+unwanted consequences of capturing unneeded variables.
 
 ## Lambdas in Kokkos
 
@@ -177,3 +262,7 @@ which are referred to as "host-device lambdas".
 
 Note the trade-off with CUDA 7.5: one can use lambdas, but they will only be executable
 on the GPU, so one cannot compile a single "kernel" which can execute on both the CPU and GPU.
+
+### Lambdas inside classes with CUDA
+
+Recall from the section on lambdas in classes above how 
