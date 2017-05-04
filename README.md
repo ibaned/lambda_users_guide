@@ -158,8 +158,9 @@ size_t LotsToDo::which_is_it(LotsToDo* this) {
 ```
 
 In addition, the C++17 standard includes a special capture list for lambdas (`[=,*this]`) which
-will force the lambda to capture the object instead of the pointer, so if we use that
-in our example:
+will force the lambda to capture the object instead of the pointer
+(the Kokkos team was involved in this addition to the C++ standard).
+If we use that feature in our example:
 
 ```cpp
 class LotsToDo {
@@ -263,6 +264,158 @@ which are referred to as "host-device lambdas".
 Note the trade-off with CUDA 7.5: one can use lambdas, but they will only be executable
 on the GPU, so one cannot compile a single "kernel" which can execute on both the CPU and GPU.
 
+CUDA versions prior to 7.5 do not support device lambdas !
+
+Ideally, code like the following should work with both versions of CUDA:
+
+```cpp
+int main() {
+  int array_size = 10;
+  Kokkos::View<double*> array("array", array_size);
+  double factor = 42.0;
+  Kokkos::parallel_for(array_size, [=] __device__ (int i) {
+    array(i) = factor * i;
+  });
+}
+```
+
+Note that the variable `array`, which is a `Kokkos::View`, is being captured by value.
+The conceptual expanded code is:
+
+```cpp
+struct Lambda {
+  Kokkos::View<double*> array;
+  double factor;
+  Lambda(Kokkos::View<double*> const& given_array, double const& given_factor) {
+    array = given_array;
+    factor = given_factor;
+  }
+  __device__ void operator()(int i) {
+    array(i) = factor * i;
+  }
+};
+
+int main() {
+  int array_size = 10;
+  Kokkos::View<double*> array("array", array_size);
+  double factor = 42.0;
+  Kokkos::parallel_for(array_size, Lambda(array, factor));
+}
+```
+
+As the number of variables captured by a lambda increases, so does its advantage
+over a functor in terms of lines of code.
+
+Now we can present the set of `LAMBDA` macros offered by Kokkos.
+Kokkos still considers CUDA lambdas
+a somewhat experimental feature, so they are disabled by default.
+(TODO: document how to enable them).
+
+`KOKKOS_LAMBDA` will be defined to `[=] __device__` or `[=] __host__ __device__`,
+depending on your CUDA version.
+Without CUDA it is simply `[=]`.
+
+If C++17 is enabled, `KOKKOS_CLASS_LAMBDA` will be defined to either
+`[=,*this] __host__ __device__` or `[=,*this]` depending on whether
+CUDA is enabled.
+
+Thus, our CUDA-specific Kokkos example above should look like this in typical
+usage of Kokkos:
+
+```cpp
+int main() {
+  int array_size = 10;
+  Kokkos::View<double*> array("array", array_size);
+  double factor = 42.0;
+  Kokkos::parallel_for(array_size, KOKKOS_LAMBDA(int i) {
+    array(i) = factor * i;
+  });
+}
+```
+
 ### Lambdas inside classes with CUDA
 
-Recall from the section on lambdas in classes above how 
+Recall from the section above on lambdas in classes how the capture of class member variables
+is actually done by capturing the `this` pointer.
+Lets return to our prior CUDA-specific example and put it inside a class to demonstrate the issues.
+If we use `[=] __device__` as our lambda, like so:
+
+```cpp
+class Fancy {
+ public:
+  void set_values() {
+    Kokkos::parallel_for(array_size, [=] __device__ (int i) {
+      array(i) = factor * i;
+    });
+  }
+ private:
+  int array_size;
+  Kokkos::View<double*> array;
+  double factor;
+}
+```
+
+We get the `this`-capturing behavior:
+
+```cpp
+struct Fancy {
+  int array_size;
+  Kokkos::View<double*> array;
+  double factor;
+};
+
+struct Lambda {
+  Fancy* this;
+  Lambda(Fancy* given_this) { this = given_this; }
+  __device__ void operator()(int i) const {
+    this->array(i) = this->factor * i;
+  }
+};
+
+void Fancy::set_values(Fancy* this) {
+  Kokkos::parallel_for(this->array_size, Lambda(this));
+}
+```
+
+Notice that although this will compile, it will crash at runtime
+because `Lambda::this` is a pointer to an object in CPU memory
+(we are assuming that the `Fancy` object is in CPU memory).
+The GPU will attempt to access `this->array` and `this->factor`,
+which is an illegal memory access from the GPU to CPU memory.
+
+Now see how using the class-capturing lambda can help:
+
+```cpp
+class Fancy {
+ public:
+  void set_values() {
+    Kokkos::parallel_for(array_size, [=,*this] __device__ (int i) {
+      array(i) = factor * i;
+    });
+  }
+ private:
+  int array_size;
+  Kokkos::View<double*> array;
+  double factor;
+}
+```
+
+```cpp
+struct Fancy {
+  int array_size;
+  Kokkos::View<double*> array;
+  double factor;
+};
+
+struct Lambda {
+  Fancy star_this;
+  Lambda(Fancy const& given_star_this) { star_this = given_star_this; }
+  __device__ void operator()(int i) const {
+    star_this.array(i) = star_this.factor * i;
+  }
+};
+
+void Fancy::set_values(Fancy* this) {
+  Kokkos::parallel_for(this->array_size, Lambda(*this));
+}
+```
