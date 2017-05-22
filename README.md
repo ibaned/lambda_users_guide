@@ -320,9 +320,10 @@ enabled with this CMake configuration flag:
 depending on your CUDA version.
 Without CUDA it is simply `[=]`.
 
-If C++17 is enabled, `KOKKOS_CLASS_LAMBDA` will be defined to either
-`[=,*this] __host__ __device__` or `[=,*this]` depending on whether
-CUDA is enabled.
+If C++17 and CUDA 8.0 are used, `KOKKOS_CLASS_LAMBDA` will be defined to
+`[=,*this] __host__ __device__`.
+If C++17 is used without CUDA 8.0, `KOKKOS_CLASS_LAMBDA` is just `[=,*this]`.
+Without C++17, `KOKKOS_CLASS_LAMBDA` is not defined.
 
 Thus, our CUDA-specific Kokkos example above should look like this in typical
 usage of Kokkos:
