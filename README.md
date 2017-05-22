@@ -324,6 +324,9 @@ If C++17 and CUDA 8.0 are used, `KOKKOS_CLASS_LAMBDA` will be defined to
 `[=,*this] __host__ __device__`.
 If C++17 is used without CUDA 8.0, `KOKKOS_CLASS_LAMBDA` is just `[=,*this]`.
 Without C++17, `KOKKOS_CLASS_LAMBDA` is not defined.
+Note that there is no variant with only `__device__` (as there was for `KOKKOS_LAMBDA` for CUDA 7.5),
+because `[=,*this]` is only supported in CUDA 8.0, so without CUDA 8.0 `KOKKOS_CLASS_LAMBDA` does not work on GPUs,
+even with CUDA 7.5.
 
 Thus, our CUDA-specific Kokkos example above should look like this in typical
 usage of Kokkos:
